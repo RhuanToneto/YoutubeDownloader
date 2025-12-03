@@ -46,6 +46,7 @@ YT_DLP_CLI = [
 CONCURRENT_FRAGMENTS = 4
 
 
+# Executa o yt-dlp para listar formatos disponíveis, com leitura assíncrona e spinner
 def run_yt_dlp(link):
     cli = YT_DLP_CLI + [link]
     proc = subprocess.Popen(cli, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
@@ -54,11 +55,13 @@ def run_yt_dlp(link):
     stderr_lines = []
     spinner_stop = threading.Event()
 
+    # Lê linhas de um stream continuamente e acumula em memória
     def _reader(stream, collector):
         for line in iter(stream.readline, ""):
             collector.append(line)
         stream.close()
 
+    # Exibe um spinner até que o evento de parada seja sinalizado
     def _spinner(stop_event):
         while not stop_event.is_set():
             print(f"\rAguarde... {next(spinner)}", end="", flush=True)
@@ -80,23 +83,28 @@ def run_yt_dlp(link):
     return "".join(stdout_lines) if stdout_lines else "".join(stderr_lines)
 
 
+# Filtra e mapeia linhas de saída para vídeos e áudios disponíveis por resolução
 def parse_available(raw, resolutions):
     lines = raw.splitlines()
     pattern = re.compile(r'^\s*\d+')
     res_list = resolutions.split()
+    # Seleciona linhas de vídeo que possuem IDs e resoluções desejadas
     video_lines = [
         line for line in lines
         if pattern.match(line) and any(res in line for res in res_list) and "video" in line.lower()
     ]
+    # Seleciona linhas de áudio que possuem apenas áudio (sem vídeo)
     audio_lines = [
         line for line in lines
         if pattern.match(line) and "audio only" in line.lower()
     ]
+    # Cria mapas id->linha para facilitar escolha posterior
     video_map = {line.split()[0]: line for line in video_lines}
     audio_map = {line.split()[0]: line for line in audio_lines}
     return video_map, audio_map
 
 
+# Gera arquivo de referência com listas de vídeos e áudios para o usuário
 def write_selection_info(video_map, audio_map, out_path):
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("VÍDEOS:\n")
@@ -116,6 +124,7 @@ def write_selection_info(video_map, audio_map, out_path):
             f.write("Nenhum áudio encontrado\n")
 
 
+# Loop de validação que garante que o ID escolhido esteja entre as opções
 def prompt_choice(prompt, choices):
     while True:
         value = input(prompt).strip()
@@ -124,6 +133,7 @@ def prompt_choice(prompt, choices):
         print("ID inválido. Insira um ID listado em \"info.txt\".\n")
 
 
+# Verifica dependências externas críticas (Node.js e FFmpeg) antes da execução
 def check_requirements():
     missing = []
     if shutil.which("node") is None:
@@ -138,10 +148,12 @@ def check_requirements():
         raise SystemExit(1)
 
 
+# Fluxo principal: coleta link, lista formatos, permite seleção e realiza download/merge
 def main():
     check_requirements()
 
     link = input("\nInsira um link do YouTube: ").strip()
+    # Valida o link e força novo input até atender os domínios suportados
     while not link or ("youtube.com" not in link and "youtu.be" not in link):
         print("Link inválido.\n")
         link = input("Insira um link do YouTube: ").strip()
@@ -152,6 +164,7 @@ def main():
     video_map, audio_map = parse_available(output_raw, RESOLUTIONS)
     write_selection_info(video_map, audio_map, "info.txt")
 
+    # Interrompe se nenhum formato elegível foi encontrado
     if not video_map and not audio_map:
         print("Nenhuma informação encontrada. Verifique o link e tente novamente.")
         input("Pressione Enter para sair...")
@@ -163,11 +176,13 @@ def main():
     print()
     audio_id = prompt_choice("ID do Áudio: ", audio_map.keys()) if audio_map else None
     confirm = input("\nIniciar download? (S/N): ").strip().lower()
+    # Prossegue apenas com confirmação explícita do usuário
     if confirm not in ("s", "sim"):
         print("Download cancelado pelo usuário.\n")
         input("Pressione Enter para sair...")
         raise SystemExit
 
+    # Monta o código de formato combinando vídeo+áudio quando necessário
     format_code = (
         video_id
         if video_id and not audio_id
@@ -196,6 +211,7 @@ def main():
 
     try:
         print("Aguarde...")
+        # Executa o download e merge via yt-dlp/ffmpeg de forma silenciosa
         proc = subprocess.Popen(download_cli, stdout=None, stderr=None)
         proc.wait()
         if proc.returncode == 0:
