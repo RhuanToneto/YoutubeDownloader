@@ -125,9 +125,11 @@ def write_selection_info(video_map, audio_map, out_path):
 
 
 # Loop de validação que garante que o ID escolhido esteja entre as opções
-def prompt_choice(prompt, choices):
+def prompt_choice(prompt, choices, allow_blank=False):
     while True:
         value = input(prompt).strip()
+        if allow_blank and value == "":
+            return None
         if value in choices:
             return value
         print("ID inválido. Insira um ID listado em \"info.txt\".\n")
@@ -172,7 +174,7 @@ def main():
 
     print("\nAbra o arquivo \"info.txt\" e escolha os IDs desejados.\n")
 
-    video_id = prompt_choice("ID do Vídeo: ", video_map.keys()) if video_map else None
+    video_id = prompt_choice("ID do Vídeo (Enter para ignorar): ", video_map.keys(), allow_blank=True) if video_map else None
     print()
     audio_id = prompt_choice("ID do Áudio: ", audio_map.keys()) if audio_map else None
     confirm = input("\nIniciar download? (S/N): ").strip().lower()
