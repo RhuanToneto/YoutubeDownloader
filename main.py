@@ -1,11 +1,10 @@
-import itertools
-from pathlib import Path
+import json
 import re
 import shutil
 import subprocess
-import threading
-import time
 import unicodedata
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 
 RESOLUTIONS = "2160 1440 1080"
@@ -61,6 +60,54 @@ def check_requirements():
         raise SystemExit(1)
 
 
+# Função que normaliza links do YouTube para formato padrão
+def normalize_youtube_link(link):
+    try:
+        u = urlparse(link)
+    except Exception:
+        return None
+    host = (u.netloc or "").lower()
+    path = u.path or ""
+    qs = parse_qs(u.query or "")
+    vid = None
+    if "youtube.com" in host:
+        if path.startswith("/watch"):
+            vid = (qs.get("v") or [None])[0]
+        elif path.startswith("/shorts/"):
+            vid = path.split("/shorts/")[-1].split("/")[0] or None
+    elif host == "youtu.be":
+        parts = [p for p in path.split("/") if p]
+        vid = parts[0] if parts else None
+    if not vid:
+        return None
+    return f"https://www.youtube.com/watch?v={vid}"
+
+
+# Função que utiliza yt-dlp para obter informações do vídeo em formato JSON
+def probe_video_info(link):
+    try:
+        proc = subprocess.run(["yt-dlp", "--skip-download", "-J", link], capture_output=True, text=True)
+    except Exception:
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        return json.loads(proc.stdout or "{}")
+    except Exception:
+        return None
+
+
+# Função que determina se o vídeo é ao vivo ou não
+def is_live_video(link):
+    info = probe_video_info(link)
+    if not info:
+        return False
+    live_status = str(info.get("live_status") or "").lower()
+    if info.get("is_live") is True:
+        return True
+    return live_status in {"is_live", "live", "is_upcoming", "upcoming"}
+
+
 # Função que sanitiza nomes de arquivos removendo caracteres inválidos e termos reservados do Windows
 def sanitize_filename(name):
     name = unicodedata.normalize("NFKC", name)
@@ -89,38 +136,8 @@ def sanitize_filename(name):
 # Função que executa yt-dlp para listar formatos utilizando leitura assíncrona com threads e exibe um spinner
 def run_yt_dlp(link):
     cli = YT_DLP_CLI + [link]
-    proc = subprocess.Popen(cli, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
-    spinner = itertools.cycle(["|", "/", "-", "\\"]) 
-    stdout_lines = []
-    stderr_lines = []
-    spinner_stop = threading.Event()
-
-    # Thread de leitura contínua que consome o stream linha a linha e acumula em memória
-    def _reader(stream, collector):
-        for line in iter(stream.readline, ""):
-            collector.append(line)
-        stream.close()
-
-    # Thread do spinner que atualiza o estado visual até o término do processo
-    def _spinner(stop_event):
-        while not stop_event.is_set():
-            print(f"\rAguarde... {next(spinner)}", end="", flush=True)
-            time.sleep(0.10)
-        print("\r" + " " * 80 + "\r", end="", flush=True)
-
-    t_out = threading.Thread(target=_reader, args=(proc.stdout, stdout_lines), daemon=True)
-    t_err = threading.Thread(target=_reader, args=(proc.stderr, stderr_lines), daemon=True)
-    t_spin = threading.Thread(target=_spinner, args=(spinner_stop,), daemon=True)
-    t_out.start()
-    t_err.start()
-    t_spin.start()
-    t_out.join()
-    t_err.join()
-    proc.wait()
-    spinner_stop.set()
-    t_spin.join()
-    print("\r", end="")
-    return "".join(stdout_lines) if stdout_lines else "".join(stderr_lines)
+    proc = subprocess.run(cli, capture_output=True, text=True)
+    return proc.stdout if proc.stdout else proc.stderr
 
 
 # Função que filtra e mapeia a saída do yt-dlp em vídeos/áudios por resolução desejada
@@ -185,12 +202,13 @@ def main():
     # Loop principal para permitir múltiplos downloads sequenciais ou saída
     while True:
         link = input("\nInsira um link do YouTube: ").strip()
-        # Validação de domínio do link garantindo origem do YouTube
-        while not link or ("youtube.com" not in link and "youtu.be" not in link):
+        normalized = normalize_youtube_link(link)
+        while not normalized or is_live_video(normalized):
             print("Link inválido.\n")
             link = input("Insira um link do YouTube: ").strip()
+            normalized = normalize_youtube_link(link)
 
-        output_raw = run_yt_dlp(link)
+        output_raw = run_yt_dlp(normalized)
         Path("raw.txt").write_text(output_raw, encoding="utf-8")
 
         video_map, audio_map = parse_available(output_raw, RESOLUTIONS)
@@ -246,12 +264,11 @@ def main():
             format_code,
             "-o",
             output_template,
-            link,
+            normalized,
         ]
 
         # Bloco de execução do download/merge via yt-dlp e ffmpeg
         try:
-            print("Aguarde...")
             proc = subprocess.Popen(download_cli, stdout=None, stderr=None)
             proc.wait()
             # Verifica sucesso do processo e aplica sanitização de nomes nos arquivos resultantes
