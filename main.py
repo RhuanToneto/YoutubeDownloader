@@ -1,11 +1,11 @@
 import itertools
+from pathlib import Path
 import re
 import shutil
 import subprocess
 import threading
 import time
-
-from pathlib import Path
+import unicodedata
 
 
 RESOLUTIONS = "2160 1440 1080"
@@ -59,6 +59,31 @@ def check_requirements():
         print("Instale as dependências e tente novamente.")
         input("\nPressione Enter para sair...")
         raise SystemExit(1)
+
+
+# Sanitiza nomes de arquivos removendo caracteres inválidos e reservados
+def sanitize_filename(name):
+    name = unicodedata.normalize("NFKC", name)
+    forbidden = "\\/:*?\"<>|"
+    table = {ord(ch): None for ch in forbidden}
+    for code in range(0x00, 0x20):
+        table[code] = None
+    sanitized = name.translate(table)
+    sanitized = re.sub(r"\s+", " ", sanitized)
+    sanitized = sanitized.lstrip(" ")
+    sanitized = sanitized.lstrip(".")
+    sanitized = sanitized.rstrip(" .")
+    reserved = {
+        "CON","PRN","AUX","NUL",
+        "COM1","COM2","COM3","COM4","COM5","COM6","COM7","COM8","COM9",
+        "LPT1","LPT2","LPT3","LPT4","LPT5","LPT6","LPT7","LPT8","LPT9",
+    }
+    stem = sanitized
+    if stem.upper() in reserved:
+        stem = ""
+    if not stem:
+        stem = "untitled"
+    return stem
 
 
 # Executa o yt-dlp para listar formatos disponíveis, com leitura assíncrona e spinner
@@ -194,6 +219,7 @@ def main():
     out_dir = Path("videos")
     out_dir.mkdir(parents=True, exist_ok=True)
     output_template = str(out_dir / "%(title)s.%(ext)s")
+    before_files = {p.resolve() for p in out_dir.glob("*") if p.is_file()}
 
     download_cli = [
         "yt-dlp",
@@ -218,6 +244,20 @@ def main():
         proc.wait()
         if proc.returncode == 0:
             print("Download e Merge concluídos com sucesso.")
+            after_files = [p for p in out_dir.glob("*") if p.is_file() and p.resolve() not in before_files]
+            for p in after_files:
+                new_stem = sanitize_filename(p.stem)
+                if new_stem != p.stem:
+                    target = p.with_name(new_stem + p.suffix)
+                    i = 1
+                    candidate = target
+                    while candidate.exists():
+                        candidate = p.with_name(f"{new_stem} ({i})" + p.suffix)
+                        i += 1
+                    try:
+                        p.rename(candidate)
+                    except Exception:
+                        pass
         else:
             print("Ocorreu um erro.")
     except Exception:
