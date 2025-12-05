@@ -46,6 +46,21 @@ YT_DLP_CLI = [
 CONCURRENT_FRAGMENTS = 4
 
 
+# Verifica dependências externas críticas (Node.js e FFmpeg) antes da execução
+def check_requirements():
+    missing = []
+    if shutil.which("node") is None:
+        missing.append("Node.js")
+    if shutil.which("ffmpeg") is None:
+        missing.append("FFmpeg")
+    if missing:
+        sep = " e " if len(missing) == 2 else ", "
+        print("\nDependências ausentes: " + sep.join(missing) + ".")
+        print("Instale as dependências e tente novamente.")
+        input("\nPressione Enter para sair...")
+        raise SystemExit(1)
+
+
 # Executa o yt-dlp para listar formatos disponíveis, com leitura assíncrona e spinner
 def run_yt_dlp(link):
     cli = YT_DLP_CLI + [link]
@@ -133,21 +148,6 @@ def prompt_choice(prompt, choices, allow_blank=False):
         if value in choices:
             return value
         print("ID inválido. Insira um ID listado em \"info.txt\".\n")
-
-
-# Verifica dependências externas críticas (Node.js e FFmpeg) antes da execução
-def check_requirements():
-    missing = []
-    if shutil.which("node") is None:
-        missing.append("Node.js")
-    if shutil.which("ffmpeg") is None:
-        missing.append("FFmpeg")
-    if missing:
-        sep = " e " if len(missing) == 2 else ", "
-        print("\nDependências ausentes: " + sep.join(missing) + ".")
-        print("Instale as dependências e tente novamente.")
-        input("\nPressione Enter para sair...")
-        raise SystemExit(1)
 
 
 # Fluxo principal: coleta link, lista formatos, permite seleção e realiza download/merge
