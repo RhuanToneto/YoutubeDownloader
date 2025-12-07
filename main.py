@@ -208,6 +208,7 @@ def main():
             link = input("Insira um link do YouTube: ").strip()
             normalized = normalize_youtube_link(link)
 
+        info = probe_video_info(link)
         output_raw = run_yt_dlp(normalized)
         Path("raw.txt").write_text(output_raw, encoding="utf-8")
 
@@ -222,6 +223,17 @@ def main():
                 break
             else:
                 continue
+
+        print()
+        title = (info or {}).get("title")
+        if title:
+            w = len(title)
+            top = "┌" + ("─" * (w + 2)) + "┐"
+            mid = "│ " + title + " │"
+            bot = "└" + ("─" * (w + 2)) + "┘"
+            print(top)
+            print(mid)
+            print(bot)
 
         print("\nAbra o arquivo \"info.txt\" e escolha os IDs desejados.\n")
 
