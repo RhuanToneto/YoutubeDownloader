@@ -167,8 +167,10 @@ def parse_available(raw, resolutions):
 
 
 # Função que gera arquivo de referência (info.txt) com as listas de vídeos e áudios disponíveis
-def write_selection_info(video_map, audio_map, out_path):
+def write_selection_info(video_map, audio_map, out_path, title=None):
     content_parts = []
+    if title:
+        content_parts.append(title + "\n\n")
     content_parts.append("VÍDEOS:\n")
     content_parts.append("\n")
     if video_map:
@@ -236,7 +238,7 @@ def main():
             Path("raw.txt").write_text(output_raw, encoding="utf-8")
 
         video_map, audio_map = parse_available(output_raw, RESOLUTIONS)
-        write_selection_info(video_map, audio_map, "info.txt")
+        write_selection_info(video_map, audio_map, "info.txt", (info or {}).get("title"))
 
         # Condicional crítica: encerra ciclo se nenhum formato elegível foi encontrado
         if not video_map and not audio_map:
