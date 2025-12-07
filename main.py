@@ -44,6 +44,17 @@ YT_DLP_CLI = [
 
 CONCURRENT_FRAGMENTS = 4
 
+FILENAME_FORBIDDEN = "\\/:*?\"<>|"
+FILENAME_TRANSLATION = {ord(ch): None for ch in FILENAME_FORBIDDEN}
+for _code in range(0x00, 0x20):
+    FILENAME_TRANSLATION[_code] = None
+FILENAME_RESERVED = {
+    "CON","PRN","AUX","NUL",
+    "COM1","COM2","COM3","COM4","COM5","COM6","COM7","COM8","COM9",
+    "LPT1","LPT2","LPT3","LPT4","LPT5","LPT6","LPT7","LPT8","LPT9",
+}
+WS_REGEX = re.compile(r"\s+")
+
 
 # Função responsável por validar dependências externas críticas (Node.js e FFmpeg) antes da execução
 def check_requirements():
@@ -60,7 +71,7 @@ def check_requirements():
         raise SystemExit(1)
 
 
-# Função que normaliza links do YouTube para formato padrão
+# Converte diferentes formas de URL do YouTube para o formato canônico /watch?v=ID
 def normalize_youtube_link(link):
     try:
         u = urlparse(link)
@@ -111,22 +122,13 @@ def is_live_video(link):
 # Função que sanitiza nomes de arquivos removendo caracteres inválidos e termos reservados do Windows
 def sanitize_filename(name):
     name = unicodedata.normalize("NFKC", name)
-    forbidden = "\\/:*?\"<>|"
-    table = {ord(ch): None for ch in forbidden}
-    for code in range(0x00, 0x20):
-        table[code] = None
-    sanitized = name.translate(table)
-    sanitized = re.sub(r"\s+", " ", sanitized)
+    sanitized = name.translate(FILENAME_TRANSLATION)
+    sanitized = WS_REGEX.sub(" ", sanitized)
     sanitized = sanitized.lstrip(" ")
     sanitized = sanitized.lstrip(".")
     sanitized = sanitized.rstrip(" .")
-    reserved = {
-        "CON","PRN","AUX","NUL",
-        "COM1","COM2","COM3","COM4","COM5","COM6","COM7","COM8","COM9",
-        "LPT1","LPT2","LPT3","LPT4","LPT5","LPT6","LPT7","LPT8","LPT9",
-    }
     stem = sanitized
-    if stem.upper() in reserved:
+    if stem.upper() in FILENAME_RESERVED:
         stem = ""
     if not stem:
         stem = "untitled"
@@ -166,31 +168,39 @@ def parse_available(raw, resolutions):
 
 # Função que gera arquivo de referência (info.txt) com as listas de vídeos e áudios disponíveis
 def write_selection_info(video_map, audio_map, out_path):
-    with open(out_path, "w", encoding="utf-8") as f:
-        f.write("VÍDEOS:\n")
-        f.write("\n")
-        if video_map:
-            for line in video_map.values():
-                f.write(line + "\n")
-        else:
-            f.write("Nenhum vídeo encontrado\n")
-        f.write("\n\n")
-        f.write("ÁUDIOS:\n")
-        f.write("\n")
-        if audio_map:
-            for line in audio_map.values():
-                f.write(line + "\n")
-        else:
-            f.write("Nenhum áudio encontrado\n")
+    content_parts = []
+    content_parts.append("VÍDEOS:\n")
+    content_parts.append("\n")
+    if video_map:
+        for line in video_map.values():
+            content_parts.append(line + "\n")
+    else:
+        content_parts.append("Nenhum vídeo encontrado\n")
+    content_parts.append("\n\n")
+    content_parts.append("ÁUDIOS:\n")
+    content_parts.append("\n")
+    if audio_map:
+        for line in audio_map.values():
+            content_parts.append(line + "\n")
+    else:
+        content_parts.append("Nenhum áudio encontrado\n")
+    new_content = "".join(content_parts)
+    try:
+        existing = Path(out_path).read_text(encoding="utf-8")
+    except Exception:
+        existing = None
+    if existing != new_content:
+        Path(out_path).write_text(new_content, encoding="utf-8")
 
 
 # Função de prompt que valida o ID inserido garantindo que pertence às opções disponíveis
 def prompt_choice(prompt, choices, allow_blank=False):
+    choice_set = set(choices)
     while True:
         value = input(prompt).strip()
         if allow_blank and value == "":
             return None
-        if value in choices:
+        if value in choice_set:
             return value
         print("ID inválido. Insira um ID listado em \"info.txt\".\n")
 
@@ -203,14 +213,27 @@ def main():
     while True:
         link = input("\nInsira um link do YouTube: ").strip()
         normalized = normalize_youtube_link(link)
-        while not normalized or is_live_video(normalized):
+        info = probe_video_info(normalized) if normalized else None
+        live = False
+        if info:
+            live_status = str((info.get("live_status") or "").lower())
+            live = info.get("is_live") is True or live_status in {"is_live", "live", "is_upcoming", "upcoming"}
+        while not normalized or live:
             print("Link inválido.\n")
             link = input("Insira um link do YouTube: ").strip()
             normalized = normalize_youtube_link(link)
-
-        info = probe_video_info(link)
+            info = probe_video_info(normalized) if normalized else None
+            live = False
+            if info:
+                live_status = str((info.get("live_status") or "").lower())
+                live = info.get("is_live") is True or live_status in {"is_live", "live", "is_upcoming", "upcoming"}
         output_raw = run_yt_dlp(normalized)
-        Path("raw.txt").write_text(output_raw, encoding="utf-8")
+        try:
+            existing_raw = Path("raw.txt").read_text(encoding="utf-8")
+        except Exception:
+            existing_raw = None
+        if existing_raw != output_raw:
+            Path("raw.txt").write_text(output_raw, encoding="utf-8")
 
         video_map, audio_map = parse_available(output_raw, RESOLUTIONS)
         write_selection_info(video_map, audio_map, "info.txt")
@@ -224,6 +247,7 @@ def main():
             else:
                 continue
 
+        # Exibição do título do vídeo com bordas
         print()
         title = (info or {}).get("title")
         if title:
@@ -284,9 +308,7 @@ def main():
 
         # Bloco de execução do download/merge via yt-dlp e ffmpeg
         try:
-            proc = subprocess.Popen(download_cli, stdout=None, stderr=None)
-            proc.wait()
-            # Verifica sucesso do processo e aplica sanitização de nomes nos arquivos resultantes
+            proc = subprocess.run(download_cli)
             if proc.returncode == 0:
                 print("Download e Merge concluídos com sucesso.")
                 after_files = [p for p in out_dir.glob("*") if p.is_file() and p.resolve() not in before_files]
