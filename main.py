@@ -1,10 +1,12 @@
 import json
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 import re
 import shutil
 import subprocess
+import sys
+import threading
 import unicodedata
-from pathlib import Path
-from urllib.parse import parse_qs, urlparse
 
 
 RESOLUTIONS = "2160 1440 1080"
@@ -119,6 +121,33 @@ def is_live_video(link):
     return live_status in {"is_live", "live", "is_upcoming", "upcoming"}
 
 
+# Função que exibe um spinner de carregamento
+def loading_spinner(message):
+    stop_event = threading.Event()
+    length = len(message) + 2
+
+    def run():
+        symbols = "|/-\\"
+        idx = 0
+        while not stop_event.is_set():
+            symbol = symbols[idx % len(symbols)]
+            sys.stdout.write("\r" + message + " " + symbol)
+            sys.stdout.flush()
+            idx += 1
+            stop_event.wait(0.1)
+        sys.stdout.write("\r" + " " * length + "\r")
+        sys.stdout.flush()
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+
+    def stop():
+        stop_event.set()
+        thread.join()
+
+    return stop
+
+
 # Função que sanitiza nomes de arquivos removendo caracteres inválidos e termos reservados do Windows
 def sanitize_filename(name):
     name = unicodedata.normalize("NFKC", name)
@@ -214,31 +243,36 @@ def main():
     # Loop principal para permitir múltiplos downloads sequenciais ou saída
     while True:
         link = input("\nInsira um link do YouTube: ").strip()
-        normalized = normalize_youtube_link(link)
-        info = probe_video_info(normalized) if normalized else None
-        live = False
-        if info:
-            live_status = str((info.get("live_status") or "").lower())
-            live = info.get("is_live") is True or live_status in {"is_live", "live", "is_upcoming", "upcoming"}
-        while not normalized or live:
+        while True:
+            stop_spinner = loading_spinner("Coletando informações, aguarde...")
+            try:
+                normalized = normalize_youtube_link(link)
+                info = probe_video_info(normalized) if normalized else None
+                live = False
+                if info:
+                    live_status = str((info.get("live_status") or "").lower())
+                    live = info.get("is_live") is True or live_status in {"is_live", "live", "is_upcoming", "upcoming"}
+            finally:
+                stop_spinner()
+            if normalized and not live:
+                break
             print("Link inválido.\n")
             link = input("Insira um link do YouTube: ").strip()
-            normalized = normalize_youtube_link(link)
-            info = probe_video_info(normalized) if normalized else None
-            live = False
-            if info:
-                live_status = str((info.get("live_status") or "").lower())
-                live = info.get("is_live") is True or live_status in {"is_live", "live", "is_upcoming", "upcoming"}
-        output_raw = run_yt_dlp(normalized)
-        try:
-            existing_raw = Path("raw.txt").read_text(encoding="utf-8")
-        except Exception:
-            existing_raw = None
-        if existing_raw != output_raw:
-            Path("raw.txt").write_text(output_raw, encoding="utf-8")
 
-        video_map, audio_map = parse_available(output_raw, RESOLUTIONS)
-        write_selection_info(video_map, audio_map, "info.txt", (info or {}).get("title"))
+        stop_spinner = loading_spinner("Coletando informações, aguarde...")
+        try:
+            output_raw = run_yt_dlp(normalized)
+            try:
+                existing_raw = Path("raw.txt").read_text(encoding="utf-8")
+            except Exception:
+                existing_raw = None
+            if existing_raw != output_raw:
+                Path("raw.txt").write_text(output_raw, encoding="utf-8")
+
+            video_map, audio_map = parse_available(output_raw, RESOLUTIONS)
+            write_selection_info(video_map, audio_map, "info.txt", (info or {}).get("title"))
+        finally:
+            stop_spinner()
 
         # Condicional crítica: encerra ciclo se nenhum formato elegível foi encontrado
         if not video_map and not audio_map:
@@ -274,7 +308,7 @@ def main():
             audio_id = prompt_choice(audio_prompt, audio_map.keys(), allow_blank=audio_allow_blank) if audio_map else None
             if video_id or audio_id:
                 break
-            print("\nSelecione pelo menos um ID de Vídeo ou de Áudio.\n")
+            print("\nSelecione pelo menos um ID de Vídeo ou Áudio.\n")
         confirm = input("\nIniciar download? (S/N): ").strip().lower()
         # Controle de fluxo: confirma início do download, caso contrário retorna ao início
         if confirm not in ("s", "sim"):
