@@ -263,10 +263,18 @@ def main():
 
         print("\nAbra o arquivo \"info.txt\" e escolha os IDs desejados.\n")
 
-        # Seleção opcional de ID de vídeo; permite ignorar para baixar apenas áudio
-        video_id = prompt_choice("ID do Vídeo (Enter para ignorar): ", video_map.keys(), allow_blank=True) if video_map else None
-        print()
-        audio_id = prompt_choice("ID do Áudio: ", audio_map.keys()) if audio_map else None
+        # Prompt de seleção de IDs de vídeo e áudio, permitindo ignorar um deles se o outro estiver disponível
+        video_allow_blank = bool(audio_map)
+        audio_allow_blank = bool(video_map)
+        while True:
+            video_prompt = "ID do Vídeo (Enter para ignorar): " if video_allow_blank else "ID do Vídeo: "
+            video_id = prompt_choice(video_prompt, video_map.keys(), allow_blank=video_allow_blank) if video_map else None
+            print()
+            audio_prompt = "ID do Áudio (Enter para ignorar): " if audio_allow_blank else "ID do Áudio: "
+            audio_id = prompt_choice(audio_prompt, audio_map.keys(), allow_blank=audio_allow_blank) if audio_map else None
+            if video_id or audio_id:
+                break
+            print("\nSelecione pelo menos um ID de Vídeo ou de Áudio.\n")
         confirm = input("\nIniciar download? (S/N): ").strip().lower()
         # Controle de fluxo: confirma início do download, caso contrário retorna ao início
         if confirm not in ("s", "sim"):
